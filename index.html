@@ -27,7 +27,7 @@
     .ex { margin-top:8px; font-size:12px; background:#ecfdf5; border:1px dashed #34d399; color:#065f46; padding:10px 12px; border-radius:10px; }
     .results { margin-top:16px; }
     .frameWrap { border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#fff; }
-    iframe { width:100%; height:70vh; border:0; }
+    iframe { width:100%; height:90vh; border:0; } /* Taller frame (was 70vh) */
     .notice { padding:12px; color:#b45309; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; font-size:13px; }
   </style>
 </head>
@@ -35,14 +35,14 @@
   <div class="wrap">
     <div class="card">
       <h1>AI Home Search → homesforsaleflorida.kw.com</h1>
-      <div class="hint">Describe your ideal home (e.g., “Port St Lucie under $500k, 3 bed, 2 bath, pool, garage, built after 2005”).</div>
+      <div class="hint">Describe your ideal home (e.g., “Port St Lucie under $500k, 4 bed, 2 bath, pool, garage, built after 2005”).</div>
       <textarea id="q" placeholder="Type your search…"></textarea>
       <div class="row">
         <button class="btn" id="go">Search</button>
         <button class="btn secondary" id="open">Open in New Tab</button>
         <div class="meta" id="status"></div>
       </div>
-      <div class="ex">Tips: “Jupiter FL 4 bed 3 bath 800–950k 2000+ sqft new construction good schools townhouse” • “Vero Beach under 600k pool fenced yard 0.25+ acres”.</div>
+      <div class="ex">Tips: “Port Charlotte 4 bed with pool under 650k” • “Jupiter FL 4 bed 3 bath 800–950k 2000+ sqft new construction good schools townhouse”.</div>
 
       <div id="summary" class="results"></div>
 
@@ -60,16 +60,15 @@
 
 <script>
 (function(){
-  const KW = {
-    domain: "https://homesforsaleflorida.kw.com",
-    path: "/search/sale"
-  };
+  // KW target
+  const KW = { domain: "https://homesforsaleflorida.kw.com", path: "/search/sale" };
 
-  // === parsing & helpers ===
+  // DOM
   const $ = sel => document.querySelector(sel);
   const elQ = $('#q'), elGo = $('#go'), elOpen = $('#open'), elStatus = $('#status');
   const elSummary = $('#summary'), elFrame = $('#resultsFrame'), elFrameWrap = $('#frameWrap'), elFrameNotice = $('#frameNotice');
 
+  // ==== helpers ====
   function normalizeMoney(raw){
     if(!raw) return null;
     let t = String(raw).toLowerCase().replace(/[, \$]/g,'').trim();
@@ -82,6 +81,7 @@
   function sqftToNumber(raw){ const m = String(raw).match(/(\d{3,6})/); return m ? Number(m[1]) : null; }
   function acresToNumber(raw){ const m = String(raw).match(/(\d+(?:\.\d+)?)/); return m ? Number(m[1]) : null; }
 
+  // Subtype detection
   const SUBTYPE = [
     { rx:/\b(condo|minium)\b/i, val:"CONDO" },
     { rx:/\b(town(?:home|house))\b/i, val:"TOWNHOUSE" },
@@ -91,16 +91,43 @@
   ];
   function detectSubtype(s){ for(const t of SUBTYPE){ if(t.rx.test(s)) return t.val; } return "HOUSE"; }
 
-  const FEATURE_KEYWORDS = {
-    "pool": ["pool"],
-    "garage": ["garage","parking"],
-    "parking": ["parking"],
+  // Robust feature recognisers + keyword mapping (fixes “pool”)
+  const FEATURE_RX = {
+    pool: /\b(pool|swimming\s*pool)\b/i,
+    "fenced yard": /\b(fenced|fence|privacy\s*fence|fenced[-\s]*yard)\b/i,
+    garage: /\b(garage|2[-\s]*car\s*garage|3[-\s]*car\s*garage|attached\s*garage|detached\s*garage|parking)\b/i,
+    parking: /\b(parking|driveway|carport)\b/i,
+    "new construction": /\b(new\s*construction|newly\s*built|brand\s*new|never\s*lived\s*in)\b/i,
+    "kitchen island": /\b(kitchen.*island|island.*kitchen|breakfast\s*bar)\b/i,
+    "good school district": /\b(a[-\s]?rated|good|top|excellent)\s+school(s)?|school\s+district|school\s+zone\b/i,
+  };
+  const FEATURE_TO_KEYWORDS = {
+    pool: ["pool"],
     "fenced yard": ["fenced","fence","fenced-yard"],
+    garage: ["garage","parking"],
+    parking: ["parking"],
     "new construction": ["new construction","newly built","brand new"],
     "kitchen island": ["kitchen island","breakfast bar"],
-    "good school district": ["good schools","a-rated schools","school district","school zone"]
+    "good school district": ["good schools","a-rated schools","school district","school zone"],
   };
 
+  // Florida city hints (extend as needed)
+  const CITY_HINTS = [
+    /port\s+charlotte/i,
+    /port\s+st\.?\s*lucie/i,
+    /st\.?\s+lucie\s+west/i,
+    /vero\s+beach/i,
+    /jupiter/i,
+    /palm\s+beach\s+gardens/i,
+    /palm\s+city/i,
+    /stuart/i,
+    /fort\s+pierce/i,
+    /miami/i,
+    /orlando/i,
+    /tampa/i,
+  ];
+
+  // ==== parser ====
   function parseQuery(q){
     const s = q.trim();
     const l = s.toLowerCase();
@@ -113,13 +140,27 @@
       keywords:[], subtype: detectSubtype(l)
     };
 
+    // Location
     const inMatch = l.match(/\bin\s+([a-z\s\-\.']+(?:,\s*[a-z]{2})?)/i);
     if(inMatch) out.location = inMatch[1].trim();
     if(!out.location){
       const head = l.split(/(\d|under|over|less|more|bed|bath|pool|garage|fence|school|sq|acre|built|year)/i)[0].trim();
       if(head && head.length>2) out.location = head.replace(/[,\.]$/,'').trim();
     }
+    // Extra fallback: known city names without “in …”
+    if (!out.location) {
+      for (const rx of CITY_HINTS) {
+        const m = l.match(rx);
+        if (m) {
+          out.location = m[0]
+            .replace(/\b\w/g, c => c.toUpperCase())
+            .replace(/St\.?\s+/i, 'St ');
+          break;
+        }
+      }
+    }
 
+    // Price
     const under = l.match(/\b(?:under|less\s+than)\s*\$?\s*([\d,\.kmb]+)/i);
     const over  = l.match(/\b(?:over|more\s+than|above)\s*\$?\s*([\d,\.kmb]+)/i);
     const range = l.match(/\$?\s*([\d,\.kmb]+)\s*[-–to]+\s*\$?\s*([\d,\.kmb]+)/i);
@@ -127,21 +168,25 @@
     else if(under){ out.priceMax = normalizeMoney(under[1]); }
     else if(over){ out.priceMin = normalizeMoney(over[1]); }
 
+    // Beds / Baths
     const bed = l.match(/(\d+)\s*(?:\+?\s*)?(?:bed|bd|bedroom)s?/i);
     const bath = l.match(/(\d+(?:\.\d)?)\s*(?:\+?\s*)?(?:bath|ba|bathroom)s?/i);
     if(bed) out.minBeds = Number(bed[1]);
     if(bath) out.minBaths = Number(bath[1]);
 
+    // Home size (sqft)
     const sqftPlus = l.match(/(\d{3,6})\s*(?:\+|\s*plus)?\s*(?:sq\.?\s*ft|square\s*feet|sqft)/i);
     const sqftRange = l.match(/(\d{3,6})\s*[-–to]+\s*(\d{3,6})\s*(?:sq\.?\s*ft|square\s*feet|sqft)/i);
     if(sqftRange){ out.homeSizeMin = sqftToNumber(sqftRange[1]); out.homeSizeMax = sqftToNumber(sqftRange[2]); }
     else if(sqftPlus){ out.homeSizeMin = sqftToNumber(sqftPlus[1]); }
 
+    // Lot size (acres)
     const acrePlus = l.match(/(\d+(?:\.\d+)?)\s*(?:\+|\s*plus)?\s*(?:acre|acres)/i);
     const acreRange = l.match(/(\d+(?:\.\d+)?)\s*[-–to]+\s*(\d+(?:\.\d+)?)\s*(?:acre|acres)/i);
     if(acreRange){ out.lotSizeMin = acresToNumber(acreRange[1]); out.lotSizeMax = acresToNumber(acreRange[2]); }
     else if(acrePlus){ out.lotSizeMin = acresToNumber(acrePlus[1]); }
 
+    // Year built
     const builtAfter = l.match(/\b(built|after|since)\s*(?:in\s*)?(\d{4})/i);
     const builtRange = l.match(/(19|20)\d{2}\s*[-–to]+\s*((?:19|20)\d{2})/i);
     const builtBefore = l.match(/\b(before|pre)\s*(\d{4})/i);
@@ -149,20 +194,24 @@
     else if(builtAfter){ out.yearBuiltMin = Number(builtAfter[2]); }
     else if(builtBefore){ out.yearBuiltMax = Number(builtBefore[2]); }
 
-    for(const [label, tokens] of Object.entries(FEATURE_KEYWORDS)){
-      const rx = new RegExp(label.replace(/\s+/g,"\\s+").replace(/[.*+?^${}()|[\]\\]/g,"\\$&"), "i");
-      if(rx.test(l)) out.keywords.push(...tokens);
+    // Features → keywords
+    for (const [label, rx] of Object.entries(FEATURE_RX)) {
+      if (rx.test(l)) {
+        const toks = FEATURE_TO_KEYWORDS[label] || [label];
+        out.keywords.push(...toks);
+      }
     }
     out.keywords = Array.from(new Set(out.keywords));
+
     return out;
   }
 
+  // Build KW URL with your site’s query keys
   function setRange(params, name, min, max){
     const minStr = (min!=null ? String(min) : "");
     const maxStr = (max!=null ? String(max) : "null");
     if (minStr || maxStr !== "null") params.set(name, `${minStr},${maxStr}`);
   }
-
   function buildKwUrl(p){
     const u = new URL(KW.domain + KW.path);
     const params = u.searchParams;
@@ -216,20 +265,17 @@
     `;
   }
 
-  // Try to load KW in an iframe (will fail if site sets X-Frame-Options/CSP)
+  // Try to load results in-frame; fall back if blocked
   function tryFrame(url){
     elFrameWrap.style.display = "block";
     elFrameNotice.style.display = "none";
     elFrame.src = "about:blank";
 
     let loaded = false;
-    elFrame.onload = () => { loaded = true; /* may still be blank if blocked, but onload fires */ };
+    elFrame.onload = () => { loaded = true; };
     elFrame.src = url;
 
-    // After 2.5s, if the frame is still on about:blank or visibly blocked, show notice.
     setTimeout(() => {
-      // We cannot inspect cross-origin content; we use heuristics:
-      // - If user agent rejected the load, many browsers keep about:blank or show a denial page.
       if (!loaded) {
         elFrameWrap.style.display = "none";
         elFrameNotice.style.display = "block";
