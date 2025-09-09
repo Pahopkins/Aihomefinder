@@ -27,7 +27,7 @@
     .ex { margin-top:8px; font-size:12px; background:#ecfdf5; border:1px dashed #34d399; color:#065f46; padding:10px 12px; border-radius:10px; }
     .results { margin-top:16px; }
     .frameWrap { border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#fff; }
-    iframe { width:100%; height:90vh; border:0; } /* Taller frame (was 70vh) */
+    iframe { width:100%; height:90vh; border:0; } /* Taller frame */
     .notice { padding:12px; color:#b45309; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; font-size:13px; }
   </style>
 </head>
@@ -35,20 +35,20 @@
   <div class="wrap">
     <div class="card">
       <h1>AI Home Search → homesforsaleflorida.kw.com</h1>
-      <div class="hint">Describe your ideal home (e.g., “Port St Lucie under $500k, 4 bed, 2 bath, pool, garage, built after 2005”).</div>
+      <div class="hint">Describe your ideal home (e.g., “Port St Lucie under $650k, 4 bed, 2 bath, pool, garage, built after 2005”).</div>
       <textarea id="q" placeholder="Type your search…"></textarea>
       <div class="row">
         <button class="btn" id="go">Search</button>
         <button class="btn secondary" id="open">Open in New Tab</button>
         <div class="meta" id="status"></div>
       </div>
-      <div class="ex">Tips: “Port Charlotte 4 bed with pool under 650k” • “Jupiter FL 4 bed 3 bath 800–950k 2000+ sqft new construction good schools townhouse”.</div>
+      <div class="ex">Examples: “Port Charlotte 4 bed with pool under 650k” • “Jupiter FL 4 bed 3 bath 800–950k 2000+ sqft new construction good schools townhouse”.</div>
 
       <div id="summary" class="results"></div>
 
       <div class="results">
         <div id="frameNotice" class="notice" style="display:none;">
-          We tried to load the KW results inside this page, but the site prevented framing (X-Frame-Options / CSP).  
+          We tried to load the KW results inside this page, but the site prevented framing (X-Frame-Options / CSP).
           Use <strong>Open in New Tab</strong> instead.
         </div>
         <div class="frameWrap" id="frameWrap" style="display:none;">
@@ -60,15 +60,15 @@
 
 <script>
 (function(){
-  // KW target
+  // ===== Target site =====
   const KW = { domain: "https://homesforsaleflorida.kw.com", path: "/search/sale" };
 
-  // DOM
+  // ===== DOM =====
   const $ = sel => document.querySelector(sel);
   const elQ = $('#q'), elGo = $('#go'), elOpen = $('#open'), elStatus = $('#status');
   const elSummary = $('#summary'), elFrame = $('#resultsFrame'), elFrameWrap = $('#frameWrap'), elFrameNotice = $('#frameNotice');
 
-  // ==== helpers ====
+  // ===== Utilities =====
   function normalizeMoney(raw){
     if(!raw) return null;
     let t = String(raw).toLowerCase().replace(/[, \$]/g,'').trim();
@@ -77,11 +77,19 @@
     if(!m) return parseInt(t,10) || null;
     return Math.round(parseFloat(m[1]) * (m[2] ? mult[m[2]] : 1));
   }
-  const num = x => (x==null || x==="" || isNaN(x) ? null : Number(x));
   function sqftToNumber(raw){ const m = String(raw).match(/(\d{3,6})/); return m ? Number(m[1]) : null; }
   function acresToNumber(raw){ const m = String(raw).match(/(\d+(?:\.\d+)?)/); return m ? Number(m[1]) : null; }
 
-  // Subtype detection
+  // KW expects snake_case keyword tokens; normalise everything
+  function normalizeKeywordToken(t) {
+    return String(t)
+      .trim()
+      .toLowerCase()
+      .replace(/[\s\-]+/g, "_")     // spaces/dashes → underscore
+      .replace(/[^a-z0-9_]/g, "");  // strip punctuation
+  }
+
+  // Property subtype detection
   const SUBTYPE = [
     { rx:/\b(condo|minium)\b/i, val:"CONDO" },
     { rx:/\b(town(?:home|house))\b/i, val:"TOWNHOUSE" },
@@ -91,43 +99,47 @@
   ];
   function detectSubtype(s){ for(const t of SUBTYPE){ if(t.rx.test(s)) return t.val; } return "HOUSE"; }
 
-  // Robust feature recognisers + keyword mapping (fixes “pool”)
+  // Robust feature recognisers (incl. screened/heated/saltwater/inground pools)
   const FEATURE_RX = {
-    pool: /\b(pool|swimming\s*pool)\b/i,
+    pool: /\b(pool|swimming\s*pool|screened\s*pool|heated\s*pool|salt[-\s]*water\s*pool|in[-\s]*ground\s*pool|inground\s*pool|private\s*pool|community\s*pool)\b/i,
     "fenced yard": /\b(fenced|fence|privacy\s*fence|fenced[-\s]*yard)\b/i,
-    garage: /\b(garage|2[-\s]*car\s*garage|3[-\s]*car\s*garage|attached\s*garage|detached\s*garage|parking)\b/i,
+    garage: /\b(garage|[23]\s*car\s*garage|attached\s*garage|detached\s*garage|parking)\b/i,
     parking: /\b(parking|driveway|carport)\b/i,
     "new construction": /\b(new\s*construction|newly\s*built|brand\s*new|never\s*lived\s*in)\b/i,
     "kitchen island": /\b(kitchen.*island|island.*kitchen|breakfast\s*bar)\b/i,
     "good school district": /\b(a[-\s]?rated|good|top|excellent)\s+school(s)?|school\s+district|school\s+zone\b/i,
+    "hot tub": /\b(hot\s*tub|spa|jacuzzi)\b/i
   };
+
+  // Map labels → KW keyword tokens (snake_case)
   const FEATURE_TO_KEYWORDS = {
     pool: ["pool"],
-    "fenced yard": ["fenced","fence","fenced-yard"],
+    "fenced yard": ["fenced_yard","fence"],
     garage: ["garage","parking"],
     parking: ["parking"],
-    "new construction": ["new construction","newly built","brand new"],
-    "kitchen island": ["kitchen island","breakfast bar"],
-    "good school district": ["good schools","a-rated schools","school district","school zone"],
+    "new construction": ["new_construction","newly_built","brand_new"],
+    "kitchen island": ["kitchen_island","breakfast_bar"],
+    "good school district": ["good_schools","a_rated_schools","school_district","school_zone"],
+    "hot tub": ["hot_tub","spa","jacuzzi"]
   };
 
-  // Florida city hints (extend as needed)
+  // Florida city hints + aliases (PSL etc.)
   const CITY_HINTS = [
-    /port\s+charlotte/i,
-    /port\s+st\.?\s*lucie/i,
-    /st\.?\s+lucie\s+west/i,
-    /vero\s+beach/i,
-    /jupiter/i,
-    /palm\s+beach\s+gardens/i,
-    /palm\s+city/i,
-    /stuart/i,
-    /fort\s+pierce/i,
-    /miami/i,
-    /orlando/i,
-    /tampa/i,
+    { rx:/\bpsl\b|\bport\s*st\.?\s*lucie\b/i, norm:"Port Saint Lucie" },
+    { rx:/\bst\.?\s*lucie\s*west\b/i, norm:"St Lucie West" },
+    { rx:/\bfort\s*pierce\b/i, norm:"Fort Pierce" },
+    { rx:/\bport\s*charlotte\b/i, norm:"Port Charlotte" },
+    { rx:/\bvero\s*beach\b/i, norm:"Vero Beach" },
+    { rx:/\bjupiter\b/i, norm:"Jupiter" },
+    { rx:/\bpalm\s*beach\s*gardens\b/i, norm:"Palm Beach Gardens" },
+    { rx:/\bpalm\s*city\b/i, norm:"Palm City" },
+    { rx:/\bstuart\b/i, norm:"Stuart" },
+    { rx:/\bmiami\b/i, norm:"Miami" },
+    { rx:/\borlando\b/i, norm:"Orlando" },
+    { rx:/\btampa\b/i, norm:"Tampa" }
   ];
 
-  // ==== parser ====
+  // ===== Parser =====
   function parseQuery(q){
     const s = q.trim();
     const l = s.toLowerCase();
@@ -143,20 +155,16 @@
     // Location
     const inMatch = l.match(/\bin\s+([a-z\s\-\.']+(?:,\s*[a-z]{2})?)/i);
     if(inMatch) out.location = inMatch[1].trim();
+
     if(!out.location){
-      const head = l.split(/(\d|under|over|less|more|bed|bath|pool|garage|fence|school|sq|acre|built|year)/i)[0].trim();
+      const head = l.split(/(\d|under|over|less|more|bed|bath|pool|garage|fence|school|sq|acre|built|year|hot\s*tub|spa|jacuzzi)/i)[0].trim();
       if(head && head.length>2) out.location = head.replace(/[,\.]$/,'').trim();
     }
-    // Extra fallback: known city names without “in …”
+
     if (!out.location) {
-      for (const rx of CITY_HINTS) {
-        const m = l.match(rx);
-        if (m) {
-          out.location = m[0]
-            .replace(/\b\w/g, c => c.toUpperCase())
-            .replace(/St\.?\s+/i, 'St ');
-          break;
-        }
+      for (const hint of CITY_HINTS) {
+        const m = l.match(hint.rx);
+        if (m) { out.location = hint.norm; break; }
       }
     }
 
@@ -194,19 +202,19 @@
     else if(builtAfter){ out.yearBuiltMin = Number(builtAfter[2]); }
     else if(builtBefore){ out.yearBuiltMax = Number(builtBefore[2]); }
 
-    // Features → keywords
+    // Features → keywords (normalised snake_case)
     for (const [label, rx] of Object.entries(FEATURE_RX)) {
       if (rx.test(l)) {
         const toks = FEATURE_TO_KEYWORDS[label] || [label];
-        out.keywords.push(...toks);
+        toks.forEach(t => out.keywords.push(normalizeKeywordToken(t)));
       }
     }
-    out.keywords = Array.from(new Set(out.keywords));
+    out.keywords = Array.from(new Set(out.keywords)); // de-dup
 
     return out;
   }
 
-  // Build KW URL with your site’s query keys
+  // ===== URL builder (KW expects min,max with "null" as open end) =====
   function setRange(params, name, min, max){
     const minStr = (min!=null ? String(min) : "");
     const maxStr = (max!=null ? String(max) : "null");
